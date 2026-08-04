@@ -7,7 +7,6 @@ async function loadModule(filename = null, filedata = null) {
     canvas.tabIndex = -1;
     canvas.oncontextmenu = (event) => event.preventDefault();
     document.body.appendChild(canvas);
-    fileInput.style.display = 'none';
     await Module({
         arguments: filename ? [filename] : [],
         canvas: (function() {
@@ -34,14 +33,17 @@ function isMobileDevice() {
 }
 
 if (isMobileDevice()) {
-    fileInput.style.display = 'block';
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.style.color = 'white';
+    document.body.appendChild(fileInput);
     fileInput.addEventListener('change', async (event) => {
         const file = event.target.files[0];
         if (file) {
             const arrayBuffer = await file.arrayBuffer();
             const byteArray = new Uint8Array(arrayBuffer);
-            // put into the emscripten FS
             const filename = '/' + file.name;
+            fileInput.remove(); // Remove the file input after file selection
             await loadModule(filename, byteArray);
         }
     });
