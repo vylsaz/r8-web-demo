@@ -1,19 +1,23 @@
 #define NOB_IMPLEMENTATION
-#include "nob.h"
+#include "thirdparty/nob.h"
 #define FLAG_IMPLEMENTATION
-#include "flag.h"
+#include "thirdparty/flag.h"
 #define OLIVEC_IMPLEMENTATION
-#include "olive.c"
+#include "thirdparty/olive.c"
 
 #define BUILD_FOLDER "build/"
 #define SRC_FOLDER "src/"
 #define EXAMPLES_FOLDER "examples/"
+#define THIRDPARTY_FOLDER "thirdparty/"
 #define TARGET_NAME "linux_amd64"
-#define RAYLIB_SRC_FOLDER "raylib-6.0/src/"
+#define RAYLIB_SRC_FOLDER THIRDPARTY_FOLDER "raylib-6.0/src/"
+
+#include "./src/layout.h"
 
 bool build_raylib(void);
 bool generate_no_rom_asm(const char *output_asm_path);
 bool rom_to_c(const char *input_path, const char *output_path);
+bool build_rom_with_vasm(Cmd *cmd, const char *input_path, const char *output_path);
 
 int main(int argc, char **argv)
 {
@@ -52,39 +56,24 @@ int main(int argc, char **argv)
     // cmd_append(&cmd, "-o", BUILD_FOLDER"fake6502.o");
     // if (!cmd_run(&cmd)) return 1;
 
-    if (!generate_no_rom_asm(BUILD_FOLDER "no_rom.asm")) return 1;
+    if (!generate_no_rom_asm(BUILD_FOLDER"no_rom.asm")) return 1;
+    if (!build_rom_with_vasm(&cmd, BUILD_FOLDER"no_rom.asm", BUILD_FOLDER"no_rom.rom")) return 1;
+    if (!rom_to_c(BUILD_FOLDER"no_rom.rom", BUILD_FOLDER"no_rom.c")) return 1;
 
-    cmd_append(&cmd, "./vasm6502_oldstyle/linux/vasm6502_oldstyle");
-    cmd_append(&cmd, BUILD_FOLDER "no_rom.asm");
-    cmd_append(&cmd, "-Fbin");
-    cmd_append(&cmd, "-o", BUILD_FOLDER "no_rom.rom");
-    if (!cmd_run(&cmd)) return 1;
-
-    if (!rom_to_c(BUILD_FOLDER "no_rom.rom", BUILD_FOLDER "no_rom.c")) return 1;
-
-    // cmd_append(&cmd, "./vasm6502_oldstyle/linux/vasm6502_oldstyle");
-    // cmd_append(&cmd, EXAMPLES_FOLDER"checker.asm");
-    // cmd_append(&cmd, "-Fbin");
-    // cmd_append(&cmd, "-o", BUILD_FOLDER EXAMPLES_FOLDER"checker.rom");
-    // if (!cmd_run(&cmd)) return 1;
-
-    // cmd_append(&cmd, "./vasm6502_oldstyle/linux/vasm6502_oldstyle");
-    // cmd_append(&cmd, EXAMPLES_FOLDER"box.asm");
-    // cmd_append(&cmd, "-Fbin");
-    // cmd_append(&cmd, "-o", BUILD_FOLDER EXAMPLES_FOLDER"box.rom");
-    // if (!cmd_run(&cmd)) return 1;
+    // if (!build_rom_with_vasm(&cmd, EXAMPLES_FOLDER"checker.asm", BUILD_FOLDER EXAMPLES_FOLDER"checker.rom")) return 1;
+    // if (!build_rom_with_vasm(&cmd, EXAMPLES_FOLDER"box.asm", BUILD_FOLDER EXAMPLES_FOLDER"box.rom")) return 1;
 
     // cmd_append(&cmd, "cc");
-    // cmd_append(&cmd, "-I./raylib-6.0/src/");
-    // cmd_append(&cmd, "-I.");
     // cmd_append(&cmd, "-I"BUILD_FOLDER);
+    // cmd_append(&cmd, "-I"RAYLIB_SRC_FOLDER);
+    // cmd_append(&cmd, "-I"THIRDPARTY_FOLDER);
     // cmd_append(&cmd, "-Wall");
     // cmd_append(&cmd, "-Wextra");
     // cmd_append(&cmd, "-ggdb");
     // cmd_append(&cmd, "-o", BUILD_FOLDER"r8");
     // cmd_append(&cmd, SRC_FOLDER"r8.c");
     // cmd_append(&cmd, BUILD_FOLDER"fake6502.o");
-    // cmd_append(&cmd, "-L./"BUILD_FOLDER"raylib_"TARGET_NAME"/");
+    // cmd_append(&cmd, "-L"BUILD_FOLDER"raylib_"TARGET_NAME"/");
     // cmd_append(&cmd, "-l:libraylib.a");
     // cmd_append(&cmd, "-lm");
     // cmd_append(&cmd, "-lX11");
@@ -163,32 +152,41 @@ bool generate_no_rom_asm(const char *output_asm_path)
     static uint32_t pixels[WIDTH*HEIGHT];
     Olivec_Canvas oc = olivec_canvas(pixels, WIDTH, HEIGHT, WIDTH);
     olivec_fill(oc, 0xFF000000);
-    const char *drop = "drop";
-    size_t sign_width  = OLIVEC_DEFAULT_FONT_WIDTH*strlen(drop);
-    size_t sign_height = (OLIVEC_DEFAULT_FONT_HEIGHT + 1)*2;
-    olivec_text(oc, drop,  (WIDTH - sign_width)/2, (HEIGHT - sign_height)/2,                                  olivec_default_font, 1, 0xFFFFFFFF);
-    olivec_text(oc, "rom", (WIDTH - sign_width)/2, (HEIGHT - sign_height)/2 + OLIVEC_DEFAULT_FONT_HEIGHT + 1, olivec_default_font, 1, 0xFFFFFFFF);
+    static const char *sign[] = {
+        "drop",
+        "rom",
+        "here",
+    };
+    size_t sign_width = 0;
+    for (size_t i = 0; i < ARRAY_LEN(sign); ++i) {
+        size_t width = strlen(sign[i]);
+        if (width > sign_width) sign_width = width;
+    }
+    sign_width *= OLIVEC_DEFAULT_FONT_WIDTH;
+    size_t sign_height = (OLIVEC_DEFAULT_FONT_HEIGHT + 1)*ARRAY_LEN(sign);
+    size_t sign_x = (WIDTH - sign_width)/2;
+    size_t sign_y = (HEIGHT - sign_height)/2;
+    for (size_t i = 0; i < ARRAY_LEN(sign); ++i) {
+        olivec_text(oc, sign[i], sign_x, sign_y + (OLIVEC_DEFAULT_FONT_HEIGHT + 1)*i, olivec_default_font, 1, 0xFFFFFFFF);
+    }
 
     String_Builder rom_asm = {0};
 
-    sb_appendf(&rom_asm, "    org $8000\n");
-    sb_appendf(&rom_asm, "CANVAS = $1000\n");
+    sb_appendf(&rom_asm, "    org $%04X\n", ENTRY_POINT);
     sb_appendf(&rom_asm, "init:\n");
     sb_appendf(&rom_asm, "    lda #<update\n");
-    sb_appendf(&rom_asm, "    sta $FFFE\n");
+    sb_appendf(&rom_asm, "    sta $%04X\n", UPDATE_VECTOR);
     sb_appendf(&rom_asm, "    lda #>update\n");
-    sb_appendf(&rom_asm, "    sta $FFFE+1\n");
+    sb_appendf(&rom_asm, "    sta $%04X\n", UPDATE_VECTOR + 1);
     sb_appendf(&rom_asm, "\n");
     sb_appendf(&rom_asm, "    lda #$FF\n");
     for (size_t y = 0; y < oc.height; ++y) {
         for (size_t x = 0; x < oc.width; ++x) {
             if (OLIVEC_PIXEL(oc, x, y)&0xFF) {
-                sb_appendf(&rom_asm, "    sta CANVAS+%d*64+%d\n", y, x);
+                sb_appendf(&rom_asm, "    sta $%04X\n", CANVAS + y*CANVAS_WIDTH + x);
             }
         }
     }
-    sb_appendf(&rom_asm, "    rts\n");
-    sb_appendf(&rom_asm, "\n");
     sb_appendf(&rom_asm, "update:\n");
     sb_appendf(&rom_asm, "    rts\n");
 
@@ -208,7 +206,8 @@ bool rom_to_c(const char *input_path, const char *output_path)
     for (size_t i = 0; i < rom.count; ) {
         sb_appendf(&out, "    ");
         for (size_t j = 0; i < rom.count && j < 10; ++j, ++i) {
-            sb_appendf(&out, "0x%02X, ", (uint8_t)rom.items[i]);
+            if (j > 0) sb_append(&out, ' ');
+            sb_appendf(&out, "0x%02X,", (uint8_t)rom.items[i]);
         }
         sb_appendf(&out, "\n");
     }
@@ -216,4 +215,13 @@ bool rom_to_c(const char *input_path, const char *output_path)
     if (!write_entire_file(output_path, out.items, out.count)) return false;
     nob_log(INFO, "generated %s", output_path);
     return true;
+}
+
+bool build_rom_with_vasm(Cmd *cmd, const char *input_path, const char *output_path)
+{
+    cmd_append(cmd, "./vasm6502_oldstyle/linux/vasm6502_oldstyle");
+    cmd_append(cmd, input_path);
+    cmd_append(cmd, "-Fbin");
+    cmd_append(cmd, "-o", output_path);
+    return cmd_run(cmd);
 }
